@@ -1,0 +1,23 @@
+# ============================================
+# ZHAEVA TRANSFER MATRIX - REQUIREMENTS
+# Version: 2.0.0
+# ============================================
+
+# Required for AES-256-GCM encryption, RSA signing,
+# SSL certificate generation, and security features
+cryptography>=41.0.0,<45.0.0
+
+# Required for progress bars and visual feedback
+tqdm>=4.65.0,<5.0.0
+
+# Optional: System monitoring and performance metrics
+psutil>=5.9.0,<6.0.0
+
+# Optional: Environment variable management
+python-dotenv>=1.0.0,<2.0.0
+
+# Optional: Color output for Windows (already handled by ANSI)
+# colorama>=0.4.6
+
+# Optional: For better terminal handling
+# rich>=13.0.0
