@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os
 import socket
-import tqdm
 import sys
 import threading
 import time
@@ -15,28 +14,31 @@ from datetime import datetime
 import argparse
 import queue
 import signal
-import tempfile
-import shutil
-import stat
 import math
 import collections
-import struct
 import secrets
 import base64
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any, Union
+from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, asdict, field
 from enum import Enum, auto
-from concurrent.futures import ThreadPoolExecutor, Future, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import traceback
 
-# ============================================================
-#  ANIMATION & COLOR SYSTEM
-# ============================================================
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cryptography.hazmat.primitives.asymmetric import rsa, padding
+    from cryptography.hazmat.primitives import hashes, serialization
+    CRYPTO_AVAILABLE = True
+except ImportError:
+    CRYPTO_AVAILABLE = False
+
+try:
+    import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
 
 class CyberColors:
-    """Cyber-themed color system for terminal output"""
-    
-    # ANSI color codes
     RESET = '\033[0m'
     BOLD = '\033[1m'
     DIM = '\033[2m'
@@ -46,7 +48,6 @@ class CyberColors:
     REVERSE = '\033[7m'
     HIDDEN = '\033[8m'
     
-    # Foreground colors
     BLACK = '\033[30m'
     RED = '\033[31m'
     GREEN = '\033[32m'
@@ -56,7 +57,6 @@ class CyberColors:
     CYAN = '\033[36m'
     WHITE = '\033[37m'
     
-    # Bright colors
     BRIGHT_BLACK = '\033[90m'
     BRIGHT_RED = '\033[91m'
     BRIGHT_GREEN = '\033[92m'
@@ -66,7 +66,6 @@ class CyberColors:
     BRIGHT_CYAN = '\033[96m'
     BRIGHT_WHITE = '\033[97m'
     
-    # Background colors
     BG_BLACK = '\033[40m'
     BG_RED = '\033[41m'
     BG_GREEN = '\033[42m'
@@ -76,7 +75,6 @@ class CyberColors:
     BG_CYAN = '\033[46m'
     BG_WHITE = '\033[47m'
     
-    # Cyber theme colors
     NEON_GREEN = '\033[38;2;0;255;200m'
     NEON_BLUE = '\033[38;2;0;150;255m'
     NEON_PURPLE = '\033[38;2;150;0;255m'
@@ -85,31 +83,10 @@ class CyberColors:
     NEON_RED = '\033[38;2;255;0;50m'
     NEON_CYAN = '\033[38;2;0;255;255m'
     NEON_YELLOW = '\033[38;2;255;255;0m'
-    
-    @staticmethod
-    def gradient_text(text: str, start_color: str, end_color: str) -> str:
-        """Create a gradient color effect for text"""
-        return f"{start_color}{text}{CyberColors.RESET}"
-    
-    @staticmethod
-    def cyber_frame(text: str, color: str = NEON_BLUE) -> str:
-        """Wrap text in a cyber-style frame"""
-        lines = text.split('\n')
-        width = max(len(line) for line in lines) + 4
-        top = f"╔{'═' * width}╗"
-        bottom = f"╚{'═' * width}╝"
-        framed = [top]
-        for line in lines:
-            framed.append(f"║ {line.ljust(width-2)} ║")
-        framed.append(bottom)
-        return f"{color}{chr(10).join(framed)}{CyberColors.RESET}"
 
 class AnimationEngine:
-    """Engine for generating terminal animations"""
-    
     @staticmethod
     def loading_spinner(message: str = "Processing", duration: float = 2.0):
-        """Display a loading spinner animation"""
         spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
         end_time = time.time() + duration
         i = 0
@@ -125,48 +102,36 @@ class AnimationEngine:
     def progress_bar(percentage: float, width: int = 50, 
                      filled_char: str = '█', empty_char: str = '░',
                      color: str = CyberColors.NEON_GREEN) -> str:
-        """Generate a cyber-style progress bar"""
         filled = int(width * percentage / 100)
         bar = f"{color}{filled_char * filled}{CyberColors.BRIGHT_BLACK}{empty_char * (width - filled)}{CyberColors.RESET}"
         return f"[{bar}] {percentage:.1f}%"
     
     @staticmethod
     def matrix_rain(lines: int = 10, duration: float = 1.0):
-        """Simulate matrix rain animation"""
         chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()'
         end_time = time.time() + duration
         positions = [0] * lines
-        
-        # Save cursor position
         sys.stdout.write('\033[s')
-        
         while time.time() < end_time:
-            # Clear screen
             sys.stdout.write('\033[2J\033[H')
-            
             for i in range(lines):
                 line = ''
                 for j in range(80):
                     if j < positions[i]:
                         char = secrets.choice(chars)
-                        # Random colors for matrix effect
                         color = CyberColors.NEON_GREEN if secrets.randbelow(10) > 2 else CyberColors.NEON_CYAN
                         line += color + char + CyberColors.RESET
                     else:
                         line += ' '
                 sys.stdout.write(line + '\n')
                 positions[i] = (positions[i] + 1) % 80
-            
             sys.stdout.flush()
             time.sleep(0.05)
-        
-        # Restore cursor position and clear
         sys.stdout.write('\033[2J\033[H')
         sys.stdout.flush()
     
     @staticmethod
     def hack_effect(text: str, color: str = CyberColors.NEON_GREEN):
-        """Display text with hacking effect (characters appear one by one)"""
         sys.stdout.write(color)
         for char in text:
             sys.stdout.write(char)
@@ -176,7 +141,6 @@ class AnimationEngine:
     
     @staticmethod
     def pulse_animation(message: str, duration: float = 2.0):
-        """Pulse animation with brightness variation"""
         end_time = time.time() + duration
         colors = [
             CyberColors.NEON_GREEN,
@@ -196,39 +160,16 @@ class AnimationEngine:
     
     @staticmethod
     def typewriter_effect(text: str, delay: float = 0.03):
-        """Typewriter effect for text"""
         for char in text:
             sys.stdout.write(char)
             sys.stdout.flush()
             time.sleep(delay)
         sys.stdout.write('\n')
-    
-    @staticmethod
-    def bouncing_ball(text: str, duration: float = 2.0):
-        """Bouncing text animation"""
-        width = 60
-        end_time = time.time() + duration
-        direction = 1
-        pos = 0
-        
-        while time.time() < end_time:
-            sys.stdout.write('\r' + ' ' * pos + text + ' ' * (width - pos - len(text)))
-            sys.stdout.flush()
-            pos += direction
-            if pos >= width - len(text) or pos <= 0:
-                direction *= -1
-            time.sleep(0.03)
-        sys.stdout.write('\r' + ' ' * width + '\r')
-        sys.stdout.flush()
 
 class CyberBanner:
-    """Cyber-style banner generator"""
-    
     @staticmethod
     def display_startup_banner():
-        """Display the startup banner with animations"""
         os.system('clear' if os.name == 'posix' else 'cls')
-        
         banner_lines = [
             f"{CyberColors.NEON_GREEN}",
             "╔══════════════════════════════════════════════════════════════════════════════╗",
@@ -258,23 +199,16 @@ class CyberBanner:
             "╚══════════════════════════════════════════════════════════════════════════════╝",
             f"{CyberColors.RESET}"
         ]
-        
-        # Animate banner with typewriter effect
         for line in banner_lines:
             print(line)
             time.sleep(0.02)
-        
-        # Matrix rain effect
         print(f"\n{CyberColors.NEON_GREEN}Initializing Transfer Matrix...{CyberColors.RESET}")
         AnimationEngine.matrix_rain(15, 1.5)
-        
-        # Hacking effect
         AnimationEngine.hack_effect("⚡ SYSTEM INITIALIZED - READY FOR TRANSFER", CyberColors.NEON_GREEN)
         print(f"{CyberColors.NEON_BLUE}{'=' * 70}{CyberColors.RESET}\n")
     
     @staticmethod
     def display_shutdown_banner():
-        """Display shutdown banner"""
         print(f"\n{CyberColors.NEON_RED}")
         print("╔══════════════════════════════════════════════════════════════════╗")
         print("║                                                                  ║")
@@ -290,15 +224,9 @@ class CyberBanner:
         print("╚══════════════════════════════════════════════════════════════════╝")
         print(f"{CyberColors.RESET}")
 
-# ============================================================
-#  CONSTANTS & CONFIGURATION
-# ============================================================
-
 __version__ = "2.0.0"
-
 DEFAULT_PORT = 65432
 BUFFER_SIZE = 16384
-FORMAT = 'utf-8'
 CHUNK_SIZE = 1024 * 1024
 MAX_RETRIES = 5
 TIMEOUT = 60
@@ -307,13 +235,7 @@ MAX_CONNECTIONS = 50
 MAX_PARALLEL_TRANSFERS = 8
 SECURITY_LEVEL_DEFAULT = 3
 
-# ============================================================
-#  LOGGING SETUP
-# ============================================================
-
 class CyberLogger:
-    """Cyber-themed logger with colored output"""
-    
     @staticmethod
     def info(message: str):
         print(f"{CyberColors.NEON_BLUE}[INFO]{CyberColors.RESET} {message}")
@@ -347,10 +269,6 @@ class CyberLogger:
         print(f"{color}[{status_type}]{CyberColors.RESET} {message}")
 
 logger = CyberLogger()
-
-# ============================================================
-#  ADVANCED ENUMS & DATA CLASSES
-# ============================================================
 
 class TransferStatus(Enum):
     PENDING = 'pending'
@@ -456,6 +374,7 @@ class TransferProgress:
     eta: float = 0.0
     chunks_completed: int = 0
     total_chunks: int = 0
+    resume_offset: int = 0
     
     @property
     def progress_percentage(self) -> float:
@@ -469,10 +388,6 @@ class TransferProgress:
             return (self.end_time - self.start_time).total_seconds()
         return (datetime.now() - self.start_time).total_seconds()
 
-# ============================================================
-#  SECURE TRANSPORT LAYER
-# ============================================================
-
 class SecureTransportLayer:
     def __init__(self):
         self.ssl_context = None
@@ -483,23 +398,22 @@ class SecureTransportLayer:
         
     def initialize_security(self, security_level: int = SECURITY_LEVEL_DEFAULT):
         self.security_level = min(5, max(1, security_level))
-        self.aes_key = os.urandom(32)
-        
-        if self.security_level >= 3:
-            self._generate_rsa_keypair()
-            self._setup_ssl_context()
+        if CRYPTO_AVAILABLE:
+            self.aes_key = os.urandom(32)
+            if self.security_level >= 3:
+                self._generate_rsa_keypair()
+                self._setup_ssl_context()
     
     def _generate_rsa_keypair(self):
         try:
-            from cryptography.hazmat.primitives.asymmetric import rsa
-            from cryptography.hazmat.primitives import serialization
-            key_size = 4096 if self.security_level >= 4 else 3072
-            self.rsa_keypair = rsa.generate_private_key(
-                public_exponent=65537,
-                key_size=key_size
-            )
-        except ImportError:
-            logger.warning("cryptography module not available for RSA")
+            if CRYPTO_AVAILABLE:
+                key_size = 4096 if self.security_level >= 4 else 3072
+                self.rsa_keypair = rsa.generate_private_key(
+                    public_exponent=65537,
+                    key_size=key_size
+                )
+        except Exception as e:
+            logger.warning(f"RSA generation failed: {e}")
     
     def _setup_ssl_context(self):
         try:
@@ -512,18 +426,15 @@ class SecureTransportLayer:
             self.ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     
     def encrypt_chunk(self, data: bytes) -> bytes:
+        if not CRYPTO_AVAILABLE or self.security_level < 2:
+            return data
         try:
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-            from cryptography.hazmat.primitives import hashes, padding
-            
             if self.security_level >= 2:
                 aesgcm = AESGCM(self.aes_key)
                 nonce = os.urandom(12)
                 encrypted = aesgcm.encrypt(nonce, data, b'')
                 data = nonce + encrypted
-                
             if self.security_level >= 4 and self.rsa_keypair:
-                from cryptography.hazmat.primitives.asymmetric import padding
                 signature = self.rsa_keypair.sign(
                     data,
                     padding.PSS(
@@ -533,46 +444,39 @@ class SecureTransportLayer:
                     hashes.SHA512()
                 )
                 data = signature + data
-                
             return data
-        except ImportError:
-            return base64.b64encode(data)
+        except Exception:
+            return data
     
     def decrypt_chunk(self, data: bytes) -> bytes:
+        if not CRYPTO_AVAILABLE or self.security_level < 2:
+            return data
         try:
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-            from cryptography.hazmat.primitives import hashes, padding
-            from cryptography.hazmat.primitives.asymmetric import padding
-            
             if self.security_level >= 4 and self.rsa_keypair:
                 signature_length = 512 if self.security_level >= 4 else 384
-                signature, data = data[:signature_length], data[signature_length:]
-                try:
-                    self.rsa_keypair.public_key().verify(
-                        signature,
-                        data,
-                        padding.PSS(
-                            mgf=padding.MGF1(hashes.SHA512()),
-                            salt_length=padding.PSS.MAX_LENGTH
-                        ),
-                        hashes.SHA512()
-                    )
-                except Exception:
-                    raise ValueError("Signature verification failed")
-                    
-            if self.security_level >= 2:
+                if len(data) > signature_length:
+                    signature, data = data[:signature_length], data[signature_length:]
+                    try:
+                        self.rsa_keypair.public_key().verify(
+                            signature,
+                            data,
+                            padding.PSS(
+                                mgf=padding.MGF1(hashes.SHA512()),
+                                salt_length=padding.PSS.MAX_LENGTH
+                            ),
+                            hashes.SHA512()
+                        )
+                    except Exception:
+                        logger.warning("Signature verification failed")
+            if self.security_level >= 2 and len(data) > 12:
                 nonce = data[:12]
                 encrypted = data[12:]
                 aesgcm = AESGCM(self.aes_key)
                 data = aesgcm.decrypt(nonce, encrypted, b'')
-                
             return data
-        except ImportError:
-            return base64.b64decode(data)
-
-# ============================================================
-#  ADAPTIVE FLOW CONTROLLER
-# ============================================================
+        except Exception as e:
+            logger.warning(f"Decryption failed: {e}")
+            return data
 
 class AdaptiveFlowController:
     def __init__(self, target_bandwidth_mbps: float = 100):
@@ -598,6 +502,9 @@ class AdaptiveFlowController:
             'available_bandwidth_mbps': 0
         }
         self.lock = threading.Lock()
+        self.rate_limit_bytes_per_sec = self.target_bandwidth
+        self.last_rate_check = time.time()
+        self.bytes_since_check = 0
         
     def update_rtt(self, rtt_ms: float):
         with self.lock:
@@ -666,10 +573,19 @@ class AdaptiveFlowController:
     def get_stats(self) -> Dict[str, Any]:
         with self.lock:
             return self.stats.copy()
-
-# ============================================================
-#  PERFORMANCE METRICS SYSTEM
-# ============================================================
+    
+    def throttle(self, bytes_sent: int):
+        with self.lock:
+            self.bytes_since_check += bytes_sent
+            now = time.time()
+            elapsed = now - self.last_rate_check
+            if elapsed >= 0.1:
+                current_rate = self.bytes_since_check / elapsed
+                if current_rate > self.current_bandwidth:
+                    sleep_time = min(0.1, (current_rate - self.current_bandwidth) / self.current_bandwidth * 0.01)
+                    time.sleep(sleep_time)
+                self.bytes_since_check = 0
+                self.last_rate_check = now
 
 class PerformanceMetrics:
     def __init__(self):
@@ -719,10 +635,6 @@ class PerformanceMetrics:
         variance = sum((x - mean) ** 2 for x in values) / (len(values) - 1)
         return math.sqrt(variance)
 
-# ============================================================
-#  CORE PROTOCOL IMPLEMENTATION
-# ============================================================
-
 class ZhaevaProtocol:
     PROTOCOL_VERSION = "2.0"
     MAGIC_BYTES = b"ZHAEVA"
@@ -740,7 +652,6 @@ class ZhaevaProtocol:
         serialized = pickle.dumps(message, protocol=pickle.HIGHEST_PROTOCOL)
         if compress and len(serialized) > 1024:
             serialized = zlib.compress(serialized, level=6)
-            message['compressed'] = True
         msg_length = len(serialized)
         return msg_length.to_bytes(8, byteorder='big') + serialized
     
@@ -760,9 +671,42 @@ class ZhaevaProtocol:
             raise ValueError("Invalid magic bytes")
         return message
 
-# ============================================================
-#  CORE TRANSFER ENGINE
-# ============================================================
+class TransferState:
+    def __init__(self, save_dir: str = "transfer_states"):
+        self.save_dir = save_dir
+        os.makedirs(save_dir, exist_ok=True)
+        self._lock = threading.Lock()
+    
+    def save_state(self, transfer_id: str, metadata: EnhancedTransferMetadata, 
+                   progress: TransferProgress):
+        with self._lock:
+            state_file = os.path.join(self.save_dir, f"{transfer_id}.state")
+            state = {
+                'metadata': asdict(metadata),
+                'progress': {
+                    'bytes_transferred': progress.bytes_transferred,
+                    'chunks_completed': progress.chunks_completed,
+                    'resume_offset': progress.resume_offset,
+                    'status': progress.status.value
+                },
+                'timestamp': datetime.now().isoformat()
+            }
+            with open(state_file, 'wb') as f:
+                pickle.dump(state, f)
+    
+    def load_state(self, transfer_id: str) -> Optional[Dict]:
+        with self._lock:
+            state_file = os.path.join(self.save_dir, f"{transfer_id}.state")
+            if os.path.exists(state_file):
+                with open(state_file, 'rb') as f:
+                    return pickle.load(f)
+            return None
+    
+    def clear_state(self, transfer_id: str):
+        with self._lock:
+            state_file = os.path.join(self.save_dir, f"{transfer_id}.state")
+            if os.path.exists(state_file):
+                os.remove(state_file)
 
 class ZhaevaEngine:
     def __init__(self, host='0.0.0.0', port=DEFAULT_PORT, 
@@ -794,7 +738,10 @@ class ZhaevaEngine:
         self.transfer_mode = TransferMode.ADAPTIVE
         self.max_parallel_transfers = MAX_PARALLEL_TRANSFERS
         self.parallel_executor = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self.transfer_state = TransferState()
+        self.batch_files = {}
+        self.directory_files = {}
         
         self.secure_transport = SecureTransportLayer()
         self.secure_transport.initialize_security(security_level)
@@ -826,6 +773,10 @@ class ZhaevaEngine:
     
     def _generate_self_signed_cert(self):
         try:
+            if not CRYPTO_AVAILABLE:
+                logger.warning("cryptography module not installed. SSL disabled.")
+                self.ssl_context = None
+                return
             from cryptography import x509
             from cryptography.x509.oid import NameOID
             from cryptography.hazmat.primitives import hashes, serialization
@@ -941,7 +892,6 @@ class ZhaevaEngine:
                     break
                 data += chunk
             if len(data) < msg_length:
-                logger.warning(f"Incomplete message: {len(data)}/{msg_length}")
                 return None
             return ZhaevaProtocol.parse_message(length_data + data)
         except socket.timeout:
@@ -951,12 +901,13 @@ class ZhaevaEngine:
             return None
     
     def send_heartbeat(self, sock: socket.socket):
-        while self.running:
+        while self.running and sock:
             try:
                 time.sleep(HEARTBEAT_INTERVAL)
-                if sock:
-                    self.send_message(sock, MessageType.HEARTBEAT, 
-                                    {'engine_id': self.engine_id})
+                if sock and self.running:
+                    if not self.send_message(sock, MessageType.HEARTBEAT, 
+                                            {'engine_id': self.engine_id}):
+                        break
             except Exception:
                 break
     
@@ -971,10 +922,12 @@ class ZhaevaEngine:
         chunk_size = self.flow_controller.get_chunk_size()
         total_chunks = (filesize + chunk_size - 1) // chunk_size
         
+        checksum = self.calculate_checksum(filepath)
+        
         metadata = EnhancedTransferMetadata(
             filename=filename,
             file_size=filesize,
-            checksum=self.calculate_checksum(filepath),
+            checksum=checksum,
             checksum_algorithm="sha512",
             chunk_size=chunk_size,
             total_chunks=total_chunks,
@@ -1000,62 +953,99 @@ class ZhaevaEngine:
             start_time=datetime.now(),
             total_chunks=total_chunks
         )
-        self.active_transfers[metadata.transfer_id] = progress
+        with self._lock:
+            self.active_transfers[metadata.transfer_id] = progress
         
         AnimationEngine.pulse_animation(f"🚀 Transferring {filename}", 1.0)
         
+        success = True
+        completed = 0
+        
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = []
+            futures = {}
             for chunk_num in range(total_chunks):
                 future = executor.submit(
                     self._transfer_chunk,
                     sock, filepath, chunk_num, chunk_size,
                     filesize, compress, metadata
                 )
-                futures.append(future)
+                futures[future] = chunk_num
             
-            success = True
-            completed = 0
-            with tqdm.tqdm(total=total_chunks, desc=f"{CyberColors.NEON_BLUE}Chunks{CyberColors.RESET}", 
-                          bar_format=f"{{l_bar}}{CyberColors.NEON_GREEN}{{bar}}{CyberColors.RESET}{{r_bar}}") as pbar:
-                for future in as_completed(futures):
-                    try:
-                        result = future.result()
-                        if not result:
-                            success = False
+            if TQDM_AVAILABLE:
+                pbar = tqdm.tqdm(total=total_chunks, desc=f"{CyberColors.NEON_BLUE}Chunks{CyberColors.RESET}")
+            else:
+                pbar = None
+            
+            for future in as_completed(futures):
+                try:
+                    result = future.result(timeout=30)
+                    if result:
                         completed += 1
-                        pbar.update(1)
-                        with self._lock:
-                            progress = self.active_transfers.get(metadata.transfer_id)
-                            if progress:
-                                progress.bytes_transferred = int((completed / total_chunks) * filesize)
-                                progress.chunks_completed = completed
-                    except Exception as e:
-                        logger.error(f"Chunk transfer failed: {e}")
+                    else:
                         success = False
+                    if pbar:
+                        pbar.update(1)
+                    with self._lock:
+                        progress = self.active_transfers.get(metadata.transfer_id)
+                        if progress:
+                            progress.bytes_transferred = int((completed / total_chunks) * filesize)
+                            progress.chunks_completed = completed
+                            self.transfer_state.save_state(metadata.transfer_id, metadata, progress)
+                except Exception as e:
+                    logger.error(f"Chunk transfer failed: {e}")
+                    success = False
+                    if pbar:
+                        pbar.update(1)
+            
+            if pbar:
+                pbar.close()
         
         if success:
-            progress.status = TransferStatus.COMPLETED
-            progress.end_time = datetime.now()
-            self.completed_transfers.append(progress)
-            self.transfer_history.append({
-                'transfer_id': metadata.transfer_id,
-                'filename': filename,
-                'size': filesize,
-                'status': 'completed',
-                'timestamp': datetime.now().isoformat()
-            })
-            logger.success(f"✅ Parallel transfer completed: {filename}")
-        else:
-            progress.status = TransferStatus.FAILED
-            progress.end_time = datetime.now()
-            self.failed_transfers.append(progress)
-            logger.error(f"❌ Parallel transfer failed: {filename}")
+            verification_success = self._verify_parallel_transfer(sock, metadata)
+            if verification_success:
+                with self._lock:
+                    if metadata.transfer_id in self.active_transfers:
+                        progress = self.active_transfers[metadata.transfer_id]
+                        progress.status = TransferStatus.COMPLETED
+                        progress.end_time = datetime.now()
+                        self.completed_transfers.append(progress)
+                self.transfer_history.append({
+                    'transfer_id': metadata.transfer_id,
+                    'filename': filename,
+                    'size': filesize,
+                    'status': 'completed',
+                    'timestamp': datetime.now().isoformat()
+                })
+                logger.success(f"✅ Parallel transfer completed: {filename}")
+                self.transfer_state.clear_state(metadata.transfer_id)
+                with self._lock:
+                    if metadata.transfer_id in self.active_transfers:
+                        del self.active_transfers[metadata.transfer_id]
+                return True
         
-        if metadata.transfer_id in self.active_transfers:
-            del self.active_transfers[metadata.transfer_id]
-        
-        return success
+        with self._lock:
+            if metadata.transfer_id in self.active_transfers:
+                progress = self.active_transfers[metadata.transfer_id]
+                progress.status = TransferStatus.FAILED
+                progress.end_time = datetime.now()
+                self.failed_transfers.append(progress)
+                del self.active_transfers[metadata.transfer_id]
+        logger.error(f"❌ Parallel transfer failed: {filename}")
+        self.transfer_state.clear_state(metadata.transfer_id)
+        return False
+    
+    def _verify_parallel_transfer(self, sock: socket.socket, metadata: EnhancedTransferMetadata) -> bool:
+        self.send_message(sock, MessageType.CHECKSUM, {'transfer_id': metadata.transfer_id})
+        response = self.receive_message(sock)
+        if response and response['type'] == MessageType.CHECKSUM.value:
+            server_checksum = response['data'].get('checksum', '')
+            if server_checksum == metadata.checksum:
+                logger.success(f"✅ Checksum verified")
+                return True
+            else:
+                logger.error(f"❌ Checksum mismatch!")
+                return False
+        return True
     
     def _transfer_chunk(self, sock: socket.socket, filepath: str,
                         chunk_num: int, chunk_size: int, filesize: int,
@@ -1082,9 +1072,14 @@ class ZhaevaEngine:
                     'encrypted': self.security_level >= 2
                 }
                 for attempt in range(MAX_RETRIES):
+                    if self.is_cancelled:
+                        return False
                     if self.send_message(sock, MessageType.FILE_CHUNK, chunk_data):
                         ack = self.receive_message(sock)
                         if ack and ack['type'] == MessageType.ACK.value:
+                            self.flow_controller.on_packet_success()
+                            self.flow_controller.throttle(len(chunk))
+                            self.metrics.record_metric('throughput', len(chunk))
                             return True
                     self.flow_controller.on_packet_loss()
                     time.sleep(0.1 * (attempt + 1))
@@ -1113,7 +1108,8 @@ class ZhaevaEngine:
                 status=TransferStatus.IN_PROGRESS,
                 start_time=datetime.now()
             )
-            self.active_transfers[transfer_id] = progress
+            with self._lock:
+                self.active_transfers[transfer_id] = progress
             
             metadata = EnhancedTransferMetadata(
                 filename=filename,
@@ -1134,9 +1130,11 @@ class ZhaevaEngine:
             if not response or response['type'] != MessageType.ACK.value:
                 raise Exception("Server did not acknowledge file info")
             
-            bar = tqdm.tqdm(total=filesize, desc=f"{CyberColors.NEON_BLUE}Uploading{CyberColors.RESET}",
-                           unit='B', unit_scale=True, 
-                           bar_format=f"{{l_bar}}{CyberColors.NEON_GREEN}{{bar}}{CyberColors.RESET}{{r_bar}}")
+            if TQDM_AVAILABLE:
+                bar = tqdm.tqdm(total=filesize, desc=f"{CyberColors.NEON_BLUE}Uploading{CyberColors.RESET}",
+                               unit='B', unit_scale=True)
+            else:
+                bar = None
             
             with open(filepath, 'rb') as f:
                 bytes_sent = 0
@@ -1145,16 +1143,24 @@ class ZhaevaEngine:
                 while bytes_sent < filesize:
                     if self.is_cancelled:
                         self.send_message(sock, MessageType.CANCEL)
-                        bar.close()
-                        progress.status = TransferStatus.CANCELLED
+                        if bar:
+                            bar.close()
+                        with self._lock:
+                            if transfer_id in self.active_transfers:
+                                self.active_transfers[transfer_id].status = TransferStatus.CANCELLED
                         logger.warning("Transfer cancelled by user")
                         return False
                     
                     while self.is_paused:
-                        progress.status = TransferStatus.PAUSED
+                        with self._lock:
+                            if transfer_id in self.active_transfers:
+                                self.active_transfers[transfer_id].status = TransferStatus.PAUSED
                         time.sleep(0.1)
                     
-                    progress.status = TransferStatus.IN_PROGRESS
+                    with self._lock:
+                        if transfer_id in self.active_transfers:
+                            self.active_transfers[transfer_id].status = TransferStatus.IN_PROGRESS
+                    
                     chunk = f.read(CHUNK_SIZE)
                     if not chunk:
                         break
@@ -1169,11 +1175,13 @@ class ZhaevaEngine:
                         'data': chunk,
                         'size': len(chunk),
                         'compressed': compress,
-                        'encrypted': self.security_level >= 2
+                        'encrypted': self.security_level >= 2,
+                        'transfer_id': transfer_id
                     }
                     
-                    if not self.send_message(sock, MessageType.FILE_CHUNK, 
-                                           chunk_data, compress=False):
+                    self.flow_controller.throttle(len(chunk))
+                    
+                    if not self.send_message(sock, MessageType.FILE_CHUNK, chunk_data, compress=False):
                         raise Exception(f"Failed to send chunk {chunk_number}")
                     
                     retries = 0
@@ -1193,28 +1201,38 @@ class ZhaevaEngine:
                     self.flow_controller.on_packet_success()
                     bytes_sent += len(chunk)
                     chunk_number += 1
-                    progress.bytes_transferred = bytes_sent
-                    bar.update(len(chunk))
+                    with self._lock:
+                        if transfer_id in self.active_transfers:
+                            self.active_transfers[transfer_id].bytes_transferred = bytes_sent
+                    if bar:
+                        bar.update(len(chunk))
                     
                     elapsed = progress.elapsed_time
                     if elapsed > 0:
                         progress.speed = bytes_sent / elapsed
                         if progress.speed > 0:
                             progress.eta = (filesize - bytes_sent) / progress.speed
+                    
+                    self.metrics.record_metric('throughput', len(chunk))
+                    self.transfer_state.save_state(transfer_id, metadata, progress)
             
-            bar.close()
-            self.send_message(sock, MessageType.COMPLETE, {'checksum': checksum})
+            if bar:
+                bar.close()
+            
+            self.send_message(sock, MessageType.COMPLETE, {'checksum': checksum, 'transfer_id': transfer_id})
             
             final_response = self.receive_message(sock)
             if final_response and final_response['type'] == MessageType.COMPLETE.value:
                 verified = final_response['data'].get('verified', False)
                 if verified:
                     logger.success(f"✅ File {filename} transferred successfully!")
-                    progress.status = TransferStatus.COMPLETED
-                    progress.end_time = datetime.now()
-                    self.completed_transfers.append(progress)
-                    if transfer_id in self.active_transfers:
-                        del self.active_transfers[transfer_id]
+                    with self._lock:
+                        if transfer_id in self.active_transfers:
+                            progress = self.active_transfers[transfer_id]
+                            progress.status = TransferStatus.COMPLETED
+                            progress.end_time = datetime.now()
+                            self.completed_transfers.append(progress)
+                            del self.active_transfers[transfer_id]
                     self.transfer_history.append({
                         'transfer_id': transfer_id,
                         'filename': filename,
@@ -1222,24 +1240,33 @@ class ZhaevaEngine:
                         'status': 'completed',
                         'timestamp': datetime.now().isoformat()
                     })
+                    self.transfer_state.clear_state(transfer_id)
                     return True
                 else:
                     logger.error(f"❌ File verification failed!")
-                    progress.status = TransferStatus.FAILED
-                    self.failed_transfers.append(progress)
+                    with self._lock:
+                        if transfer_id in self.active_transfers:
+                            progress = self.active_transfers[transfer_id]
+                            progress.status = TransferStatus.FAILED
+                            progress.end_time = datetime.now()
+                            self.failed_transfers.append(progress)
+                            del self.active_transfers[transfer_id]
+                    self.transfer_state.clear_state(transfer_id)
                     return False
             
+            self.transfer_state.clear_state(transfer_id)
             return True
             
         except Exception as e:
             logger.error(f"Transfer error: {e}")
-            if transfer_id in self.active_transfers:
-                progress = self.active_transfers[transfer_id]
-                progress.status = TransferStatus.FAILED
-                progress.end_time = datetime.now()
-                self.failed_transfers.append(progress)
+            with self._lock:
                 if transfer_id in self.active_transfers:
+                    progress = self.active_transfers[transfer_id]
+                    progress.status = TransferStatus.FAILED
+                    progress.end_time = datetime.now()
+                    self.failed_transfers.append(progress)
                     del self.active_transfers[transfer_id]
+            self.transfer_state.clear_state(transfer_id)
             return False
     
     def transfer_directory(self, sock: socket.socket, dirpath: str, 
@@ -1288,6 +1315,12 @@ class ZhaevaEngine:
             else:
                 logger.error(f"Failed to transfer: {file_info['rel_path']}")
         
+        self.send_message(sock, MessageType.COMPLETE, {
+            'directory': True,
+            'successful': successful,
+            'total': len(files)
+        })
+        
         if successful == len(files):
             logger.success(f"✅ Directory transferred successfully!")
             return True
@@ -1310,7 +1343,7 @@ class ZhaevaEngine:
         
         batch_info = {
             'total_files': len(valid_files),
-            'files': [os.path.basename(f) for f in valid_files],
+            'files': [{'name': os.path.basename(f), 'path': f, 'size': os.path.getsize(f)} for f in valid_files],
             'dest_dir': dest_dir or '.',
             'timestamp': datetime.now().isoformat()
         }
@@ -1325,39 +1358,162 @@ class ZhaevaEngine:
             raise Exception("Server did not acknowledge batch info")
         
         successful = 0
-        for filepath in valid_files:
-            dest = os.path.join(dest_dir or '', os.path.basename(filepath)) if dest_dir else None
-            if self.transfer_file(sock, filepath, dest, compress):
+        for file_info in valid_files:
+            dest = os.path.join(dest_dir or '', os.path.basename(file_info)) if dest_dir else None
+            if self.transfer_file(sock, file_info, dest, compress):
                 successful += 1
         
-        return successful == len(valid_files)
+        self.send_message(sock, MessageType.COMPLETE, {
+            'batch': True,
+            'successful': successful,
+            'total': len(valid_files)
+        })
+        
+        if successful == len(valid_files):
+            logger.success(f"✅ Batch transfer completed successfully!")
+            return True
+        else:
+            logger.warning(f"⚠️ Batch transfer partially completed: {successful}/{len(valid_files)} files")
+            return False
     
     def get_status(self) -> Dict[str, Any]:
-        return {
-            'engine_id': self.engine_id,
-            'state': self.state.value,
-            'active_transfers': len(self.active_transfers),
-            'completed_transfers': len(self.completed_transfers),
-            'failed_transfers': len(self.failed_transfers),
-            'active_list': [
-                {
-                    'filename': p.filename,
-                    'progress': p.progress_percentage,
-                    'speed': p.speed,
-                    'eta': p.eta,
-                    'chunks': f"{p.chunks_completed}/{p.total_chunks}"
-                }
-                for p in self.active_transfers.values()
-            ],
-            'history': self.transfer_history[-10:],
-            'performance': self.metrics.get_report(),
-            'network': self.flow_controller.get_stats(),
-            'security_level': self.security_level
+        with self._lock:
+            return {
+                'engine_id': self.engine_id,
+                'state': self.state.value if hasattr(self.state, 'value') else str(self.state),
+                'active_transfers': len(self.active_transfers),
+                'completed_transfers': len(self.completed_transfers),
+                'failed_transfers': len(self.failed_transfers),
+                'active_list': [
+                    {
+                        'transfer_id': tid,
+                        'filename': p.filename,
+                        'progress': p.progress_percentage,
+                        'speed': p.speed,
+                        'eta': p.eta,
+                        'chunks': f"{p.chunks_completed}/{p.total_chunks}" if p.total_chunks > 0 else "N/A",
+                        'status': p.status.value if hasattr(p.status, 'value') else str(p.status),
+                        'bytes_transferred': p.bytes_transferred,
+                        'total_size': p.total_size
+                    }
+                    for tid, p in self.active_transfers.items()
+                ],
+                'history': self.transfer_history[-10:],
+                'performance': self.metrics.get_report(),
+                'network': self.flow_controller.get_stats(),
+                'security_level': self.security_level
+            }
+    
+    def resume_transfer(self, sock: socket.socket, transfer_id: str) -> bool:
+        state = self.transfer_state.load_state(transfer_id)
+        if not state:
+            logger.error(f"No state found for transfer {transfer_id}")
+            return False
+        
+        metadata = EnhancedTransferMetadata(**state['metadata'])
+        progress_data = state['progress']
+        
+        resume_offset = progress_data.get('resume_offset', 0)
+        bytes_transferred = progress_data.get('bytes_transferred', 0)
+        
+        logger.info(f"🔄 Resuming transfer {metadata.filename} from offset {resume_offset}")
+        
+        resume_data = {
+            'transfer_id': transfer_id,
+            'resume_offset': resume_offset,
+            'bytes_transferred': bytes_transferred,
+            'filename': metadata.filename
         }
-
-# ============================================================
-#  ZHAEVA SERVER
-# ============================================================
+        
+        if not self.send_message(sock, MessageType.RESUME, resume_data):
+            return False
+        
+        response = self.receive_message(sock)
+        if not response or response['type'] != MessageType.ACK.value:
+            logger.error("Server did not acknowledge resume request")
+            return False
+        
+        with self._lock:
+            if transfer_id in self.active_transfers:
+                progress = self.active_transfers[transfer_id]
+                progress.resume_offset = resume_offset
+                progress.bytes_transferred = bytes_transferred
+                progress.status = TransferStatus.RESUMING
+        
+        return self._continue_transfer(sock, metadata, resume_offset)
+    
+    def _continue_transfer(self, sock: socket.socket, metadata: EnhancedTransferMetadata, 
+                          resume_offset: int) -> bool:
+        filepath = metadata.filename
+        if not os.path.exists(filepath):
+            logger.error(f"File not found: {filepath}")
+            return False
+        
+        filesize = os.path.getsize(filepath)
+        compress = metadata.compression_algorithm != "none"
+        
+        with open(filepath, 'rb') as f:
+            f.seek(resume_offset)
+            bytes_sent = resume_offset
+            chunk_number = resume_offset // CHUNK_SIZE
+            
+            if TQDM_AVAILABLE:
+                bar = tqdm.tqdm(total=filesize, initial=bytes_sent, 
+                               desc=f"{CyberColors.NEON_BLUE}Resuming{CyberColors.RESET}",
+                               unit='B', unit_scale=True)
+            else:
+                bar = None
+            
+            while bytes_sent < filesize:
+                if self.is_cancelled:
+                    return False
+                
+                while self.is_paused:
+                    time.sleep(0.1)
+                
+                chunk = f.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                
+                if compress:
+                    chunk = self.compress_data(chunk)
+                if self.security_level >= 2:
+                    chunk = self.encrypt_chunk(chunk)
+                
+                chunk_data = {
+                    'chunk_number': chunk_number,
+                    'data': chunk,
+                    'size': len(chunk),
+                    'compressed': compress,
+                    'encrypted': self.security_level >= 2,
+                    'transfer_id': metadata.transfer_id,
+                    'offset': bytes_sent
+                }
+                
+                if not self.send_message(sock, MessageType.FILE_CHUNK, chunk_data):
+                    return False
+                
+                ack = self.receive_message(sock)
+                if not ack or ack['type'] != MessageType.ACK.value:
+                    return False
+                
+                bytes_sent += len(chunk)
+                chunk_number += 1
+                if bar:
+                    bar.update(len(chunk))
+                
+                with self._lock:
+                    if metadata.transfer_id in self.active_transfers:
+                        progress = self.active_transfers[metadata.transfer_id]
+                        progress.bytes_transferred = bytes_sent
+                        progress.resume_offset = bytes_sent
+                        self.transfer_state.save_state(metadata.transfer_id, metadata, progress)
+            
+            if bar:
+                bar.close()
+        
+        self.send_message(sock, MessageType.COMPLETE, {'transfer_id': metadata.transfer_id})
+        return True
 
 class ZhaevaServer:
     def __init__(self, host='0.0.0.0', port=DEFAULT_PORT, 
@@ -1372,7 +1528,10 @@ class ZhaevaServer:
         self.server_socket = None
         self.connections = {}
         self._start_time = datetime.now()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self.batch_receivers = {}
+        self.dir_receivers = {}
+        self.received_checksums = {}
         
         os.makedirs(save_dir, exist_ok=True)
         signal.signal(signal.SIGINT, self._shutdown)
@@ -1432,7 +1591,6 @@ class ZhaevaServer:
         print(f"{CyberColors.NEON_CYAN}📁 Save directory: {CyberColors.BRIGHT_WHITE}{self.save_dir}")
         print(f"{CyberColors.NEON_CYAN}🔐 SSL Enabled: {CyberColors.BRIGHT_WHITE}{self.engine.use_ssl}")
         print(f"{CyberColors.NEON_CYAN}🛡️ Security Level: {CyberColors.BRIGHT_WHITE}{self.engine.security_level}")
-        print(f"{CyberColors.NEON_CYAN}⚡ Transfer Mode: {CyberColors.BRIGHT_WHITE}{self.engine.transfer_mode.value}")
         print("═" * 70)
         print(f"{CyberColors.NEON_ORANGE}Press Ctrl+C to shutdown")
         print("═" * 70)
@@ -1442,6 +1600,8 @@ class ZhaevaServer:
     
     def _handle_client(self, client_socket: socket.socket, addr: tuple):
         transfer_id = None
+        batch_id = None
+        dir_id = None
         
         try:
             self.engine.send_message(client_socket, MessageType.HANDSHAKE, {
@@ -1465,11 +1625,16 @@ class ZhaevaServer:
                 elif msg_type == MessageType.METADATA.value:
                     transfer_id = self._handle_metadata(client_socket, data)
                 elif msg_type == MessageType.DIRECTORY_INFO.value:
-                    transfer_id = self._handle_directory_info(client_socket, data)
+                    dir_id = self._handle_directory_info(client_socket, data)
                 elif msg_type == MessageType.FILE_CHUNK.value:
-                    self._handle_file_chunk(client_socket, data, transfer_id)
+                    if transfer_id:
+                        self._handle_file_chunk(client_socket, data, transfer_id)
+                    elif dir_id:
+                        self._handle_file_chunk(client_socket, data, dir_id)
+                    elif batch_id:
+                        self._handle_file_chunk(client_socket, data, batch_id)
                 elif msg_type == MessageType.BATCH_INFO.value:
-                    self._handle_batch_info(client_socket, data)
+                    batch_id = self._handle_batch_info(client_socket, data)
                 elif msg_type == MessageType.CANCEL.value:
                     logger.warning(f"⏹️ Transfer cancelled by client")
                     break
@@ -1487,6 +1652,10 @@ class ZhaevaServer:
                     self.engine.send_message(client_socket, MessageType.STATUS_RESPONSE, status)
                 elif msg_type == MessageType.COMPLETE.value:
                     self._handle_completion(client_socket, data, transfer_id)
+                elif msg_type == MessageType.CHECKSUM.value:
+                    self._handle_checksum_request(client_socket, data)
+                elif msg_type == MessageType.RESUME.value:
+                    transfer_id = self._handle_resume_request(client_socket, data)
                 else:
                     logger.warning(f"Unknown message type: {msg_type}")
                     
@@ -1538,7 +1707,8 @@ class ZhaevaServer:
             status=TransferStatus.IN_PROGRESS,
             start_time=datetime.now()
         )
-        self.engine.active_transfers[transfer_id] = progress
+        with self.engine._lock:
+            self.engine.active_transfers[transfer_id] = progress
         
         self.engine.send_message(client_socket, MessageType.ACK, {
             'transfer_id': transfer_id,
@@ -1549,6 +1719,7 @@ class ZhaevaServer:
         self.engine._current_file = open(save_path, 'wb')
         self.engine._current_path = save_path
         self.engine._bytes_received = 0
+        self.engine._chunks_received = {}
         
         logger.info(f"📥 Receiving {filename} ({filesize:,} bytes) -> {save_path}")
         
@@ -1581,7 +1752,8 @@ class ZhaevaServer:
             start_time=datetime.now(),
             total_chunks=metadata.total_chunks
         )
-        self.engine.active_transfers[transfer_id] = progress
+        with self.engine._lock:
+            self.engine.active_transfers[transfer_id] = progress
         
         self.engine.send_message(client_socket, MessageType.ACK, {
             'transfer_id': transfer_id,
@@ -1593,6 +1765,7 @@ class ZhaevaServer:
         self.engine._current_path = save_path
         self.engine._bytes_received = 0
         self.engine._chunks_received = {}
+        self.received_checksums[transfer_id] = metadata.checksum
         
         logger.info(f"📥 Receiving {filename} ({filesize:,} bytes, {metadata.total_chunks} chunks) -> {save_path}")
         
@@ -1623,15 +1796,22 @@ class ZhaevaServer:
                 return
         
         if self.engine._current_file:
-            self.engine._current_file.seek(offset)
-            self.engine._current_file.write(chunk)
-            self.engine._bytes_received += len(chunk)
-            
-            if transfer_id and transfer_id in self.engine.active_transfers:
-                progress = self.engine.active_transfers[transfer_id]
-                progress.bytes_transferred = self.engine._bytes_received
-                progress.chunks_completed += 1
-                self.engine.metrics.record_metric('throughput', len(chunk))
+            try:
+                self.engine._current_file.seek(offset)
+                self.engine._current_file.write(chunk)
+                self.engine._bytes_received += len(chunk)
+                self.engine._chunks_received[chunk_number] = True
+                
+                if transfer_id and transfer_id in self.engine.active_transfers:
+                    with self.engine._lock:
+                        progress = self.engine.active_transfers[transfer_id]
+                        progress.bytes_transferred = self.engine._bytes_received
+                        progress.chunks_completed = len(self.engine._chunks_received)
+                        self.engine.metrics.record_metric('throughput', len(chunk))
+            except Exception as e:
+                logger.error(f"Error writing chunk {chunk_number}: {e}")
+                self.engine.send_message(client_socket, MessageType.NACK, {'error': 'Write failed'})
+                return
         
         self.engine.send_message(client_socket, MessageType.ACK, {
             'chunk': chunk_number,
@@ -1643,11 +1823,20 @@ class ZhaevaServer:
         dest_path = data.get('dest_path', dirname)
         file_count = data['file_count']
         total_size = data.get('total_size', 0)
+        files = data.get('files', [])
         
         save_path = os.path.join(self.save_dir, dest_path)
         os.makedirs(save_path, exist_ok=True)
         
         transfer_id = f"dir-{int(time.time())}"
+        
+        self.dir_receivers[transfer_id] = {
+            'save_path': save_path,
+            'files': files,
+            'received_files': [],
+            'failed_files': [],
+            'current_file': None
+        }
         
         logger.info(f"📁 Receiving directory: {dirname} -> {save_path}")
         logger.info(f"   {file_count} files, {total_size:,} bytes")
@@ -1659,16 +1848,86 @@ class ZhaevaServer:
         
         return transfer_id
     
-    def _handle_batch_info(self, client_socket: socket.socket, data: dict):
+    def _handle_batch_info(self, client_socket: socket.socket, data: dict) -> str:
         total_files = data['total_files']
-        files = data['files']
+        files = data.get('files', [])
         dest_dir = data.get('dest_dir', '.')
+        
+        batch_id = f"batch-{int(time.time())}"
+        
+        self.batch_receivers[batch_id] = {
+            'dest_dir': dest_dir,
+            'files': files,
+            'received_files': [],
+            'failed_files': [],
+            'total_files': total_files
+        }
         
         logger.info(f"📦 Receiving batch: {total_files} files")
         for f in files:
-            logger.info(f"   - {f}")
+            if isinstance(f, dict):
+                logger.info(f"   - {f.get('name', 'unknown')}")
+            else:
+                logger.info(f"   - {f}")
         
-        self.engine.send_message(client_socket, MessageType.ACK)
+        self.engine.send_message(client_socket, MessageType.ACK, {
+            'batch_id': batch_id
+        })
+        
+        return batch_id
+    
+    def _handle_checksum_request(self, client_socket: socket.socket, data: dict):
+        transfer_id = data.get('transfer_id')
+        if transfer_id and transfer_id in self.received_checksums:
+            checksum = self.received_checksums[transfer_id]
+            self.engine.send_message(client_socket, MessageType.CHECKSUM, {
+                'checksum': checksum,
+                'transfer_id': transfer_id
+            })
+        else:
+            self.engine.send_message(client_socket, MessageType.CHECKSUM, {
+                'checksum': '',
+                'transfer_id': transfer_id,
+                'error': 'Checksum not found'
+            })
+    
+    def _handle_resume_request(self, client_socket: socket.socket, data: dict) -> str:
+        transfer_id = data.get('transfer_id')
+        resume_offset = data.get('resume_offset', 0)
+        filename = data.get('filename', '')
+        
+        save_path = os.path.join(self.save_dir, filename)
+        
+        if not os.path.exists(save_path):
+            self.engine.send_message(client_socket, MessageType.NACK, {'error': 'File not found'})
+            return None
+        
+        progress = TransferProgress(
+            transfer_id=transfer_id,
+            filename=filename,
+            total_size=os.path.getsize(save_path),
+            bytes_transferred=resume_offset,
+            status=TransferStatus.RESUMING,
+            start_time=datetime.now(),
+            resume_offset=resume_offset
+        )
+        
+        with self.engine._lock:
+            self.engine.active_transfers[transfer_id] = progress
+        
+        self.engine._current_file = open(save_path, 'r+b')
+        self.engine._current_path = save_path
+        self.engine._bytes_received = resume_offset
+        
+        self.engine.send_message(client_socket, MessageType.ACK, {
+            'transfer_id': transfer_id,
+            'resume_offset': resume_offset,
+            'ready': True
+        })
+        
+        logger.info(f"🔄 Resuming transfer {filename} from offset {resume_offset}")
+        
+        return transfer_id
     
     def _handle_completion(self, client_socket: socket.socket, data: dict, 
                           transfer_id: str):
@@ -1680,35 +1939,52 @@ class ZhaevaServer:
             verified = (actual_checksum == checksum)
             
             if verified:
-                logger.success(f"✅ File verified: {checksum}")
+                logger.success(f"✅ File verified")
             else:
                 logger.error(f"❌ Checksum mismatch!")
-                logger.error(f"   Expected: {checksum}")
-                logger.error(f"   Actual:   {actual_checksum}")
+        elif data.get('directory', False) or data.get('batch', False):
+            verified = True
+            if data.get('directory', False):
+                successful = data.get('successful', 0)
+                total = data.get('total', 0)
+                if successful == total:
+                    logger.success(f"✅ Directory transfer completed: {successful}/{total} files")
+                else:
+                    logger.warning(f"⚠️ Directory transfer partially completed: {successful}/{total} files")
+                verified = successful == total
+            elif data.get('batch', False):
+                successful = data.get('successful', 0)
+                total = data.get('total', 0)
+                if successful == total:
+                    logger.success(f"✅ Batch transfer completed: {successful}/{total} files")
+                else:
+                    logger.warning(f"⚠️ Batch transfer partially completed: {successful}/{total} files")
+                verified = successful == total
         
         if self.engine._current_file:
             self.engine._current_file.close()
             self.engine._current_file = None
         
         if transfer_id and transfer_id in self.engine.active_transfers:
-            progress = self.engine.active_transfers[transfer_id]
-            progress.status = TransferStatus.COMPLETED if verified else TransferStatus.FAILED
-            progress.end_time = datetime.now()
-            
-            if verified:
-                self.engine.completed_transfers.append(progress)
-                self.engine.transfer_history.append({
-                    'transfer_id': transfer_id,
-                    'filename': progress.filename,
-                    'size': progress.total_size,
-                    'status': 'completed',
-                    'timestamp': datetime.now().isoformat()
-                })
-            else:
-                self.engine.failed_transfers.append(progress)
-            
-            if transfer_id in self.engine.active_transfers:
-                del self.engine.active_transfers[transfer_id]
+            with self.engine._lock:
+                progress = self.engine.active_transfers[transfer_id]
+                progress.status = TransferStatus.COMPLETED if verified else TransferStatus.FAILED
+                progress.end_time = datetime.now()
+                
+                if verified:
+                    self.engine.completed_transfers.append(progress)
+                    self.engine.transfer_history.append({
+                        'transfer_id': transfer_id,
+                        'filename': progress.filename,
+                        'size': progress.total_size,
+                        'status': 'completed',
+                        'timestamp': datetime.now().isoformat()
+                    })
+                else:
+                    self.engine.failed_transfers.append(progress)
+                
+                if transfer_id in self.engine.active_transfers:
+                    del self.engine.active_transfers[transfer_id]
         
         self.engine.send_message(client_socket, MessageType.COMPLETE, {
             'verified': verified,
@@ -1724,13 +2000,14 @@ class ZhaevaServer:
         while self.running:
             time.sleep(30)
             if self.running:
-                status = {
-                    'connections': len(self.clients),
-                    'active_transfers': len(self.engine.active_transfers),
-                    'completed': len(self.engine.completed_transfers),
-                    'failed': len(self.engine.failed_transfers),
-                    'uptime': str(datetime.now() - self._start_time)
-                }
+                with self._lock:
+                    status = {
+                        'connections': len(self.clients),
+                        'active_transfers': len(self.engine.active_transfers),
+                        'completed': len(self.engine.completed_transfers),
+                        'failed': len(self.engine.failed_transfers),
+                        'uptime': str(datetime.now() - self._start_time)
+                    }
                 logger.status(f"📊 Status: {status}", "SYSTEM")
     
     def _cleanup(self):
@@ -1760,10 +2037,6 @@ class ZhaevaServer:
         time.sleep(2)
         sys.exit(0)
 
-# ============================================================
-#  ZHAEVA CLIENT
-# ============================================================
-
 class ZhaevaClient:
     def __init__(self, host='localhost', port=DEFAULT_PORT, **kwargs):
         self.host = host
@@ -1773,7 +2046,7 @@ class ZhaevaClient:
         self.connected = False
         self.server_info = None
         self.interactive = False
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
     
     def connect(self) -> bool:
         try:
@@ -1897,6 +2170,11 @@ class ZhaevaClient:
                 self.engine.send_message(self.socket, MessageType.CANCEL)
         logger.info("⏹️ Transfer cancelled")
     
+    def resume_transfer(self, transfer_id: str) -> bool:
+        if not self.connected:
+            return False
+        return self.engine.resume_transfer(self.socket, transfer_id)
+    
     def interactive_mode(self):
         self.interactive = True
         
@@ -1915,10 +2193,11 @@ class ZhaevaClient:
             (f"{CyberColors.NEON_GREEN}send-file-p{CyberColors.RESET}", "<path> [dest]   - Send file with parallel chunks"),
             (f"{CyberColors.NEON_GREEN}send-dir{CyberColors.RESET}", "  <path> [dest]      - Send a directory"),
             (f"{CyberColors.NEON_GREEN}send-batch{CyberColors.RESET}", "<path1> [path2]  - Send multiple files"),
+            (f"{CyberColors.NEON_GREEN}resume{CyberColors.RESET}", " <transfer_id>     - Resume a transfer"),
             (f"{CyberColors.NEON_BLUE}status{CyberColors.RESET}", "                     - Show transfer status"),
             (f"{CyberColors.NEON_BLUE}history{CyberColors.RESET}", "                    - Show transfer history"),
             (f"{CyberColors.NEON_ORANGE}pause{CyberColors.RESET}", "                     - Pause current transfer"),
-            (f"{CyberColors.NEON_ORANGE}resume{CyberColors.RESET}", "                    - Resume current transfer"),
+            (f"{CyberColors.NEON_ORANGE}resume-cmd{CyberColors.RESET}", "                 - Resume current transfer"),
             (f"{CyberColors.NEON_RED}cancel{CyberColors.RESET}", "                    - Cancel current transfer"),
             (f"{CyberColors.NEON_PURPLE}server-status{CyberColors.RESET}", "             - Get server status"),
             (f"{CyberColors.NEON_PURPLE}performance{CyberColors.RESET}", "              - Show performance metrics"),
@@ -1942,7 +2221,7 @@ class ZhaevaClient:
                 if command in ('quit', 'exit', 'q'):
                     break
                 elif command == 'help':
-                    print("Available commands: send-file, send-file-p, send-dir, send-batch, status, history, pause, resume, cancel, server-status, performance, help, quit")
+                    print("Available commands: send-file, send-file-p, send-dir, send-batch, resume, status, history, pause, resume-cmd, cancel, server-status, performance, help, quit")
                 elif command == 'send-file':
                     if len(parts) >= 2:
                         dest = parts[2] if len(parts) > 2 else None
@@ -1966,9 +2245,14 @@ class ZhaevaClient:
                         self.send_batch(parts[1:])
                     else:
                         print("Usage: send-batch <path1> [path2] ...")
+                elif command == 'resume':
+                    if len(parts) >= 2:
+                        self.resume_transfer(parts[1])
+                    else:
+                        print("Usage: resume <transfer_id>")
                 elif command == 'pause':
                     self.pause()
-                elif command == 'resume':
+                elif command == 'resume-cmd':
                     self.resume()
                 elif command == 'cancel':
                     self.cancel()
@@ -1992,7 +2276,7 @@ class ZhaevaClient:
                             print("  Currently Active:")
                             for t in status['active_list']:
                                 bar = AnimationEngine.progress_bar(t['progress'])
-                                print(f"    - {t['filename']}: {bar} ({t['speed']/1024:.1f} KB/s)")
+                                print(f"    - {t['filename']}: {bar} ({t.get('speed', 0)/1024:.1f} KB/s)")
                     else:
                         print("❌ Failed to get server status")
                 else:
@@ -2015,8 +2299,9 @@ class ZhaevaClient:
                 speed = progress.speed / 1024 if progress.speed > 0 else 0
                 eta = progress.eta if progress.eta > 0 else 0
                 chunks = f"{progress.chunks_completed}/{progress.total_chunks}" if progress.total_chunks > 0 else "N/A"
+                status = progress.status.value if hasattr(progress.status, 'value') else str(progress.status)
                 bar = AnimationEngine.progress_bar(pct)
-                print(f"  {progress.filename}: {bar} ({speed:.1f} KB/s, ETA: {eta:.1f}s, Chunks: {chunks})")
+                print(f"  {progress.filename}: {bar} ({speed:.1f} KB/s, ETA: {eta:.1f}s, Chunks: {chunks}, Status: {status})")
         else:
             print("No active transfers")
     
@@ -2037,10 +2322,6 @@ class ZhaevaClient:
         for name, stats in metrics['metrics'].items():
             if stats:
                 print(f"  {name}: {stats['current']:.2f} (avg: {stats['average']:.2f})")
-
-# ============================================================
-#  COMMAND LINE INTERFACE
-# ============================================================
 
 class ZhaevaCLI:
     def __init__(self):
@@ -2137,10 +2418,6 @@ class ZhaevaCLI:
         else:
             self.run_client()
 
-# ============================================================
-#  MAIN ENTRY POINT
-# ============================================================
-
 def main():
     cli = ZhaevaCLI()
     try:
@@ -2150,6 +2427,7 @@ def main():
         sys.exit(0)
     except Exception as e:
         logger.error(f"Fatal error: {e}")
+        traceback.print_exc()
         sys.exit(1)
 
 if __name__ == "__main__":
