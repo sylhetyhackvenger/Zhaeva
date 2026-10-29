@@ -512,27 +512,6 @@ Performance Improvements:
 
 ---
 
-🤝 Contributing
-
-Development Setup
-
-```bash
-# Clone repository
-git clone https://github.com/your-org/zhaeva.git
-cd zhaeva
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install development dependencies
-pip install -r requirements-dev.txt
-pip install -e .
-
-# Run tests
-pytest tests/
-```
-
 Code Standards
 
 · Style: PEP 8 compliance
